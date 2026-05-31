@@ -13,7 +13,6 @@ INITRAMFS := $(BUILD_DIR)/initramfs.cpio
 ISO := $(BUILD_DIR)/$(PROJECT).iso
 
 KERNEL_IMAGE := $(LINUX_DIR)/arch/x86/boot/bzImage
-GOBOX_BIN := $(BUILD_DIR)/gobox
 
 GO ?= go
 CPIO ?= cpio
@@ -22,37 +21,10 @@ QEMU ?= qemu-system-x86_64
 
 JOBS ?= $(shell nproc)
 
-APPLETS := \
-	sh \
-	init \
-	echo \
-	cat \
-	pwd \
-	ls \
-	mkdir \
-	rm \
-	touch \
-	cp \
-	mv \
-	head \
-	tail \
-	whoami \
-	uname \
-	clear \
-	true \
-	false \
-	yes \
-	sleep \
-	which \
-	env \
-	export \
-	unset \
-	cd \
-	exit \
-	fetch \
-	help
+# gobox uses its own Makefile and outputs this binary:
+GOBOX_BIN := $(GOBOX_DIR)/build/gobox
 
-.PHONY: all kernel kernel-menuconfig gobox initramfs iso run run-serial \
+.PHONY: all kernel kernel-menuconfig gobox gobox-clean gobox-check initramfs iso run run-serial \
 	clean distclean limine limine-check check-tools print-tree fs-default
 
 all: iso
@@ -85,6 +57,8 @@ fs-default:
 		'HOME=/root' \
 		'SHELL=/bin/sh' \
 		'TERM=linux' \
+		'USER=root' \
+		'LOGNAME=root' \
 		> $(FS_DIR)/etc/environment
 
 limine:
@@ -107,14 +81,21 @@ kernel:
 kernel-menuconfig:
 	$(MAKE) -C $(LINUX_DIR) menuconfig
 
+# Build gobox using gobox's own Makefile.
+# CGO_ENABLED=0 is important for initramfs, because the binary must be static.
 gobox:
 	@test -d "$(GOBOX_DIR)" || (echo "missing $(GOBOX_DIR)"; exit 1)
-	@mkdir -p $(BUILD_DIR)
-	cd $(GOBOX_DIR) && \
-		CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-		$(GO) build -ldflags "-s -w" -o ../$(GOBOX_BIN) ./cmd/gobox
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+		$(MAKE) -C $(GOBOX_DIR) release GO="$(GO)"
+	@test -f "$(GOBOX_BIN)" || (echo "missing $(GOBOX_BIN)"; exit 1)
 	@file $(GOBOX_BIN)
 	@ldd $(GOBOX_BIN) 2>/dev/null || true
+
+gobox-check:
+	$(MAKE) -C $(GOBOX_DIR) check
+
+gobox-clean:
+	$(MAKE) -C $(GOBOX_DIR) clean
 
 initramfs: gobox
 	rm -rf $(INITRAMFS_DIR)
@@ -144,10 +125,12 @@ initramfs: gobox
 	# Kernel runs /init. This is not a shell script.
 	ln -sfn bin/gobox $(INITRAMFS_DIR)/init
 
-	# BusyBox-like applet symlinks.
-	@for applet in $(APPLETS); do \
+	# BusyBox-like applet symlinks from gobox's own Makefile.
+	@APPLETS="$$( $(MAKE) -s -C $(GOBOX_DIR) list-applets )"; \
+	for applet in $$APPLETS; do \
 		if [ "$$applet" != "init" ]; then \
 			ln -sfn gobox "$(INITRAMFS_DIR)/bin/$$applet"; \
+			echo "initramfs link: /bin/$$applet -> gobox"; \
 		fi; \
 	done
 
@@ -209,10 +192,11 @@ print-tree:
 	@xorriso -indev $(ISO) -find / -type f 2>/dev/null | grep -E 'bzImage|initramfs|limine|BOOT' || true
 	@echo
 	@echo "Initramfs important files:"
-	@find $(INITRAMFS_DIR) -maxdepth 3 \( -type f -o -type l \) | sort | grep -E '/init|/bin/gobox|/bin/sh|/etc/' || true
+	@find $(INITRAMFS_DIR) -maxdepth 3 \( -type f -o -type l \) | sort | grep -E '/init|/bin/gobox|/bin/sh|/bin/fetch|/etc/' || true
 
 clean:
 	rm -rf $(BUILD_DIR)
 
 distclean: clean
 	$(MAKE) -C $(LINUX_DIR) clean
+	$(MAKE) -C $(GOBOX_DIR) clean
