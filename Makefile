@@ -75,6 +75,7 @@ limine-check:
 
 kernel:
 	@test -d "$(LINUX_DIR)" || (echo "missing $(LINUX_DIR)"; exit 1)
+	cp .config "$(LINUX_DIR)"
 	$(MAKE) -C $(LINUX_DIR) -j$(JOBS)
 	@test -f "$(KERNEL_IMAGE)" || (echo "missing $(KERNEL_IMAGE)"; exit 1)
 
@@ -125,7 +126,6 @@ initramfs: gobox
 	# Kernel runs /init. This is not a shell script.
 	ln -sfn bin/gobox $(INITRAMFS_DIR)/init
 
-	# BusyBox-like applet symlinks from gobox's own Makefile.
 	@APPLETS="$$( $(MAKE) -s -C $(GOBOX_DIR) list-applets )"; \
 	for applet in $$APPLETS; do \
 		if [ "$$applet" != "init" ]; then \
