@@ -49,6 +49,7 @@ APPLETS := \
 	unset \
 	cd \
 	exit \
+	fetch \
 	help
 
 .PHONY: all kernel kernel-menuconfig gobox initramfs iso run run-serial \
