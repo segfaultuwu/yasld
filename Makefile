@@ -216,6 +216,8 @@ run: iso
 		-cdrom $(ISO) \
 		-boot d \
 		-vga $(QEMU_VGA)
+		-netdev user,id=net0 \
+		-device virtio-net-pci,netdev=net0
 
 run-serial: iso
 	$(QEMU) \
@@ -224,6 +226,8 @@ run-serial: iso
 		-boot d \
 		-vga $(QEMU_VGA) \
 		-serial stdio
+		-netdev user,id=net0 \
+		-device virtio-net-pci,netdev=net0
 
 run-kvm: iso
 	$(QEMU) \
@@ -233,6 +237,8 @@ run-kvm: iso
 		-cdrom $(ISO) \
 		-boot d \
 		-vga $(QEMU_VGA)
+		-netdev user,id=net0 \
+		-device virtio-net-pci,netdev=net0
 
 inspect-iso:
 	xorriso -indev $(ISO) -find / -type f
