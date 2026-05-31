@@ -7,7 +7,7 @@
 <img src="assets/yasld.png" width="200">
 
 <p align="center">
-  A tiny experimental Linux distro built from a custom kernel, Limine, initramfs, and a Go-based userland.
+  A tiny experimental Linux distro built from the latest kernel (may be unstable), Limine, initramfs, and a Go-based userland.
 </p>
 
 ---

@@ -1,6 +1,12 @@
 [submodule "linux"]
 	path = linux
 	url = https://github.com/torvalds/linux
+	branch = master
 [submodule "gobox"]
 	path = gobox
 	url = https://github.com/segfaultuwu/gobox
+	branch = main
+[submodule "limine"]
+	path = limine
+	url = https://github.com/limine-bootloader/limine.git
+	branch = v11.x-binary

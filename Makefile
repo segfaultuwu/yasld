@@ -12,6 +12,7 @@ INITRAMFS_DIR := $(BUILD_DIR)/initramfs
 INITRAMFS := $(BUILD_DIR)/initramfs.cpio
 ISO := $(BUILD_DIR)/$(PROJECT).iso
 
+KERNEL_CONFIG := .config
 KERNEL_IMAGE := $(LINUX_DIR)/arch/x86/boot/bzImage
 
 GO ?= go
@@ -21,11 +22,25 @@ QEMU ?= qemu-system-x86_64
 
 JOBS ?= $(shell nproc)
 
-# gobox uses its own Makefile and outputs this binary:
+QEMU_MEM ?= 2G
+QEMU_VGA ?= std
+
+LIMINE_BRANCH ?= v11.x-binary
+GOBOX_BRANCH ?= main
+
 GOBOX_BIN := $(GOBOX_DIR)/build/gobox
 
-.PHONY: all kernel kernel-menuconfig gobox gobox-clean gobox-check initramfs iso run run-serial \
-	clean distclean limine limine-check check-tools print-tree fs-default
+.PHONY: all \
+	check-tools \
+	fs-default \
+	update-submodules update-limine update-gobox \
+	limine limine-check \
+	kernel kernel-config kernel-menuconfig kernel-clean \
+	gobox gobox-check gobox-clean \
+	initramfs iso \
+	run run-serial run-kvm \
+	print-tree inspect-iso \
+	clean distclean
 
 all: iso
 
@@ -61,6 +76,17 @@ fs-default:
 		'LOGNAME=root' \
 		> $(FS_DIR)/etc/environment
 
+update-submodules:
+	git submodule update --init --recursive --remote
+
+update-limine:
+	@test -d "$(LIMINE_DIR)" || (echo "missing $(LIMINE_DIR)"; exit 1)
+	cd $(LIMINE_DIR) && git fetch origin && git switch "$(LIMINE_BRANCH)" && git pull --ff-only
+
+update-gobox:
+	@test -d "$(GOBOX_DIR)" || (echo "missing $(GOBOX_DIR)"; exit 1)
+	cd $(GOBOX_DIR) && git fetch origin && git switch "$(GOBOX_BRANCH)" && git pull --ff-only
+
 limine:
 	@test -d "$(LIMINE_DIR)" || (echo "missing $(LIMINE_DIR). clone limine first"; exit 1)
 	$(MAKE) -C $(LIMINE_DIR)
@@ -72,18 +98,32 @@ limine-check:
 	@test -f "$(LIMINE_DIR)/limine-uefi-cd.bin" || $(MAKE) -C $(LIMINE_DIR)
 	@test -f "$(LIMINE_DIR)/BOOTX64.EFI" || (echo "missing $(LIMINE_DIR)/BOOTX64.EFI"; exit 1)
 	@test -f "$(LIMINE_DIR)/BOOTIA32.EFI" || (echo "missing $(LIMINE_DIR)/BOOTIA32.EFI"; exit 1)
+	@test -x "$(LIMINE_DIR)/limine" || (echo "missing executable $(LIMINE_DIR)/limine"; exit 1)
 
-kernel:
+kernel-config:
 	@test -d "$(LINUX_DIR)" || (echo "missing $(LINUX_DIR)"; exit 1)
-	cp .config "$(LINUX_DIR)"
+	@if [ -f "$(KERNEL_CONFIG)" ]; then \
+		cp "$(KERNEL_CONFIG)" "$(LINUX_DIR)/.config"; \
+		$(MAKE) -C "$(LINUX_DIR)" olddefconfig; \
+	else \
+		echo "warning: missing $(KERNEL_CONFIG), using linux/.config or defconfig"; \
+		if [ ! -f "$(LINUX_DIR)/.config" ]; then \
+			$(MAKE) -C "$(LINUX_DIR)" defconfig; \
+		fi; \
+	fi
+
+kernel: kernel-config
 	$(MAKE) -C $(LINUX_DIR) -j$(JOBS)
 	@test -f "$(KERNEL_IMAGE)" || (echo "missing $(KERNEL_IMAGE)"; exit 1)
 
 kernel-menuconfig:
+	@test -d "$(LINUX_DIR)" || (echo "missing $(LINUX_DIR)"; exit 1)
 	$(MAKE) -C $(LINUX_DIR) menuconfig
+	cp "$(LINUX_DIR)/.config" "$(KERNEL_CONFIG)"
 
-# Build gobox using gobox's own Makefile.
-# CGO_ENABLED=0 is important for initramfs, because the binary must be static.
+kernel-clean:
+	$(MAKE) -C $(LINUX_DIR) clean
+
 gobox:
 	@test -d "$(GOBOX_DIR)" || (echo "missing $(GOBOX_DIR)"; exit 1)
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
@@ -101,29 +141,27 @@ gobox-clean:
 initramfs: gobox
 	rm -rf $(INITRAMFS_DIR)
 	mkdir -p $(INITRAMFS_DIR)
-
-	# Base initramfs dirs.
 	mkdir -p $(INITRAMFS_DIR)/bin
 	mkdir -p $(INITRAMFS_DIR)/sbin
 	mkdir -p $(INITRAMFS_DIR)/proc
 	mkdir -p $(INITRAMFS_DIR)/sys
 	mkdir -p $(INITRAMFS_DIR)/dev
 	mkdir -p $(INITRAMFS_DIR)/tmp
+	mkdir -p $(INITRAMFS_DIR)/run
 	mkdir -p $(INITRAMFS_DIR)/etc
 	mkdir -p $(INITRAMFS_DIR)/root
+	mkdir -p $(INITRAMFS_DIR)/usr/bin
+	mkdir -p $(INITRAMFS_DIR)/usr/sbin
 
-	# Copy fs overlay, e.g. fs/etc/os-release, fs/etc/passwd, fs/root, etc.
 	@if [ -d "$(FS_DIR)" ]; then \
 		cp -a $(FS_DIR)/. $(INITRAMFS_DIR)/; \
 	else \
 		echo "warning: missing $(FS_DIR), run: make fs-default"; \
 	fi
 
-	# Install gobox.
 	cp $(GOBOX_BIN) $(INITRAMFS_DIR)/bin/gobox
 	chmod +x $(INITRAMFS_DIR)/bin/gobox
 
-	# Kernel runs /init. This is not a shell script.
 	ln -sfn bin/gobox $(INITRAMFS_DIR)/init
 
 	@APPLETS="$$( $(MAKE) -s -C $(GOBOX_DIR) list-applets )"; \
@@ -174,18 +212,30 @@ iso: check-tools limine-check kernel initramfs
 
 run: iso
 	$(QEMU) \
-		-m 2G \
+		-m $(QEMU_MEM) \
 		-cdrom $(ISO) \
 		-boot d \
-		-vga std
+		-vga $(QEMU_VGA)
 
 run-serial: iso
 	$(QEMU) \
-		-m 2G \
+		-m $(QEMU_MEM) \
 		-cdrom $(ISO) \
 		-boot d \
-		-vga std \
+		-vga $(QEMU_VGA) \
 		-serial stdio
+
+run-kvm: iso
+	$(QEMU) \
+		-enable-kvm \
+		-cpu host \
+		-m $(QEMU_MEM) \
+		-cdrom $(ISO) \
+		-boot d \
+		-vga $(QEMU_VGA)
+
+inspect-iso:
+	xorriso -indev $(ISO) -find / -type f
 
 print-tree:
 	@echo "ISO contents:"
