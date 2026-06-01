@@ -21,6 +21,14 @@ It boots a Linux kernel with **Limine**, loads a custom **initramfs**, and start
 This is not meant to be a serious distro.  
 It is mostly for learning, experimenting, breaking things, and understanding how Linux userspace bootstrapping works.
 
+## Build
+
+```bash
+make iso 
+# or with gcc
+make iso WITH_GCC=1
+```
+
 ## Userland
 
 YASLD uses **Gobox** as its userland:

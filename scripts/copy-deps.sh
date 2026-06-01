@@ -9,6 +9,19 @@ fi
 ROOT="$1"
 shift
 
+COPIED_LIST="$(mktemp)"
+trap 'rm -f "$COPIED_LIST"' EXIT INT TERM
+
+already_seen() {
+	dst="$1"
+	grep -Fxq "$dst" "$COPIED_LIST" 2>/dev/null
+}
+
+mark_seen() {
+	dst="$1"
+	printf '%s\n' "$dst" >> "$COPIED_LIST"
+}
+
 copy_one() {
 	src="$1"
 
@@ -17,15 +30,21 @@ copy_one() {
 	dst="$ROOT$src"
 	mkdir -p "$ROOT$(dirname "$src")"
 
-	# Always remove old destination.
-	# This prevents broken symlinks from surviving between builds.
-	rm -f "$dst"
+	# If file already exists in initramfs, skip it.
+	# This also skips symlinks, because user asked: if exists -> skip.
+	if [ -e "$dst" ] || [ -L "$dst" ]; then
+		if ! already_seen "$dst"; then
+			echo "  skip existing $src"
+			mark_seen "$dst"
+		fi
+		return 0
+	fi
 
-	# If src is a symlink, copy the real target contents into dst.
-	# Example:
-	#   /usr/lib/libldap.so.2 -> libldap.so.2.0.200
-	# becomes:
-	#   $ROOT/usr/lib/libldap.so.2 as a real ELF file
+	if already_seen "$dst"; then
+		return 0
+	fi
+
+	# Always dereference source symlinks when copying new files.
 	real="$(readlink -f "$src" 2>/dev/null || true)"
 
 	if [ -n "$real" ] && [ -e "$real" ]; then
@@ -34,7 +53,8 @@ copy_one() {
 		cp -L "$src" "$dst"
 	fi
 
-	echo "  $src"
+	mark_seen "$dst"
+	echo "  copy $src"
 }
 
 is_elf() {
@@ -72,6 +92,18 @@ copy_elf_deps() {
 	bin="$1"
 
 	[ -f "$bin" ] || return 0
+
+	dst="$ROOT$bin"
+
+	# If this exact file already exists in initramfs, skip dependency scan too.
+	if [ -e "$dst" ] || [ -L "$dst" ]; then
+		if ! already_seen "$dst"; then
+			echo "skip deps existing: $bin"
+			mark_seen "$dst"
+		fi
+		return 0
+	fi
+
 	is_elf "$bin" || return 0
 
 	echo "copy deps: $bin"
@@ -118,7 +150,7 @@ do
 done
 
 # Extra dependency passes.
-# Some copied shared libraries have their own deps, so scan copied files again.
+# Copied shared libraries may have their own deps.
 for pass in 1 2 3; do
 	echo "dependency pass $pass"
 
